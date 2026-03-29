@@ -1,0 +1,229 @@
+name: stock-macro-poc
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    profiles: ["core", "all"]
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:19092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    ports:
+      - "19092:19092"
+    profiles: ["core", "all"]
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    ports:
+      - "8091:8080"
+    profiles: ["core", "all"]
+
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    environment:
+      CLUSTER_NAME: stock-macro-poc
+      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
+    ports:
+      - "9870:9870"
+      - "9000:9000"
+    volumes:
+      - namenode_data:/hadoop/dfs/name
+      - ./infra/hadoop/core-site.xml:/etc/hadoop/core-site.xml:ro
+      - ./infra/hadoop/hdfs-site.xml:/etc/hadoop/hdfs-site.xml:ro
+    profiles: ["storage", "all"]
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    depends_on:
+      - namenode
+    environment:
+      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
+      SERVICE_PRECONDITION: namenode:9870
+    ports:
+      - "9864:9864"
+    volumes:
+      - datanode_data:/hadoop/dfs/data
+      - ./infra/hadoop/core-site.xml:/etc/hadoop/core-site.xml:ro
+      - ./infra/hadoop/hdfs-site.xml:/etc/hadoop/hdfs-site.xml:ro
+    profiles: ["storage", "all"]
+
+  postgres-metastore:
+    image: postgres:15
+    container_name: postgres-metastore
+    environment:
+      POSTGRES_DB: metastore_db
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hivepw
+    ports:
+      - "5434:5432"
+    volumes:
+      - metastore_db:/var/lib/postgresql/data
+    profiles: ["storage", "all"]
+
+  hive-metastore:
+    image: apache/hive:4.0.0
+    container_name: hive-metastore
+    depends_on:
+      - namenode
+      - datanode
+    environment:
+      SERVICE_NAME: metastore
+      SERVICE_OPTS: >-
+        -Dfs.defaultFS=hdfs://namenode:9000
+    ports:
+      - "9083:9083"
+    profiles: ["storage", "all"]
+
+  trino:
+    image: trinodb/trino:444
+    container_name: trino
+    depends_on:
+      - hive-metastore
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./infra/trino/etc:/etc/trino:ro
+      - ./infra/hadoop:/etc/hadoop/conf:ro
+      - ./trino/sql:/opt/trino/sql:ro
+    profiles: ["query", "all"]
+
+  flink-jobmanager:
+    image: flink:1.18.1-scala_2.12-java11
+    container_name: flink-jobmanager
+    command: jobmanager
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: flink-jobmanager
+      HADOOP_CONF_DIR: /etc/hadoop/conf
+      HADOOP_CLASSPATH: /opt/flink/hadoop-libs/*
+      FLINK_PROPERTIES: |
+        taskmanager.numberOfTaskSlots: 8
+        parallelism.default: 1
+    depends_on:
+      - kafka
+    ports:
+      - "8082:8081"
+    volumes:
+      - ./flink/sql:/opt/flink/sql:ro
+      - ./flink/hadoop-libs:/opt/flink/hadoop-libs:ro
+      - ./infra/hadoop:/etc/hadoop/conf:ro
+    profiles: ["compute", "all"]
+
+  flink-taskmanager:
+    image: flink:1.18.1-scala_2.12-java11
+    container_name: flink-taskmanager
+    command: taskmanager
+    environment:
+      JOB_MANAGER_RPC_ADDRESS: flink-jobmanager
+      HADOOP_CONF_DIR: /etc/hadoop/conf
+      HADOOP_CLASSPATH: /opt/flink/hadoop-libs/*
+      FLINK_PROPERTIES: |
+        taskmanager.numberOfTaskSlots: 8
+        parallelism.default: 1
+    depends_on:
+      - flink-jobmanager
+    volumes:
+      - ./flink/sql:/opt/flink/sql:ro
+      - ./flink/hadoop-libs:/opt/flink/hadoop-libs:ro
+      - ./infra/hadoop:/etc/hadoop/conf:ro
+    profiles: ["compute", "all"]
+
+  druid:
+    image: ghcr.io/arm64-compat/apache/druid:30.0.0
+    container_name: druid
+    command: ["coordinator"]
+    environment:
+      DRUID_SINGLE_NODE_CONF: micro-quickstart
+      ZOOKEEPER: zookeeper:2181
+    ports:
+      - "8083:8081"
+    volumes:
+      - ./druid/specs:/opt/druid/specs:ro
+    profiles: ["serving", "all"]
+
+  druid-middlemanager:
+    image: ghcr.io/arm64-compat/apache/druid:30.0.0
+    container_name: druid-middlemanager
+    command: ["middleManager"]
+    environment:
+      DRUID_SINGLE_NODE_CONF: micro-quickstart
+      ZOOKEEPER: zookeeper:2181
+    depends_on:
+      - druid
+      - zookeeper
+      - kafka
+    profiles: ["serving", "all"]
+
+  superset:
+    image: apache/superset:3.1.0
+    container_name: superset
+    depends_on:
+      - trino
+      - druid
+    environment:
+      SUPERSET_SECRET_KEY: stock-macro-poc-secret
+      SUPERSET_ADMIN_USER: admin
+      SUPERSET_ADMIN_PASSWORD: admin
+      SUPERSET_ADMIN_EMAIL: admin@example.com
+    command: >-
+      /bin/sh -c "
+      superset db upgrade &&
+      superset fab create-admin
+      --username $$SUPERSET_ADMIN_USER
+      --firstname Admin
+      --lastname User
+      --email $$SUPERSET_ADMIN_EMAIL
+      --password $$SUPERSET_ADMIN_PASSWORD || true &&
+      superset init &&
+      superset run -h 0.0.0.0 -p 8088"
+    ports:
+      - "8088:8088"
+    profiles: ["bi", "all"]
+
+  airflow:
+    image: apache/airflow:2.9.1
+    container_name: airflow
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      FRED_API_KEY: ${FRED_API_KEY:-}
+    command: standalone
+    ports:
+      - "8090:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./:/opt/project
+    profiles: ["orchestration", "all"]
+
+volumes:
+  namenode_data:
+  datanode_data:
+  metastore_db:

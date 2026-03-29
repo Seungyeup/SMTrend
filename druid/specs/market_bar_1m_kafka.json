@@ -1,0 +1,60 @@
+{
+  "type": "kafka",
+  "spec": {
+    "dataSchema": {
+      "dataSource": "market_bar_1m",
+      "timestampSpec": {
+        "column": "window_start",
+        "format": "auto"
+      },
+      "dimensionsSpec": {
+        "dimensions": [
+          "symbol"
+        ]
+      },
+      "metricsSpec": [
+        {
+          "type": "doubleSum",
+          "name": "close_price_sum",
+          "fieldName": "close_price"
+        },
+        {
+          "type": "longSum",
+          "name": "volume_proxy_sum",
+          "fieldName": "volume"
+        },
+        {
+          "type": "longSum",
+          "name": "tick_count_sum",
+          "fieldName": "tick_count"
+        }
+      ],
+      "granularitySpec": {
+        "type": "uniform",
+        "segmentGranularity": "HOUR",
+        "queryGranularity": "MINUTE",
+        "rollup": false
+      }
+    },
+    "ioConfig": {
+      "type": "kafka",
+      "topic": "curated.market.bar.1m.v1",
+      "inputFormat": {
+        "type": "json"
+      },
+      "consumerProperties": {
+        "bootstrap.servers": "kafka:9092",
+        "isolation.level": "read_committed"
+      },
+      "taskCount": 1,
+      "replicas": 1,
+      "taskDuration": "PT1H",
+      "useEarliestOffset": true,
+      "completionTimeout": "PT30M",
+      "lateMessageRejectionPeriod": "PT2H"
+    },
+    "tuningConfig": {
+      "type": "kafka"
+    }
+  }
+}
