@@ -103,6 +103,7 @@ services:
   trino:
     image: trinodb/trino:444
     container_name: trino
+    restart: unless-stopped
     depends_on:
       - hive-metastore
     ports:
@@ -192,6 +193,7 @@ services:
       SUPERSET_ADMIN_EMAIL: admin@example.com
     command: >-
       /bin/sh -c "
+      pip install --no-cache-dir trino==0.329.0 &&
       superset db upgrade &&
       superset fab create-admin
       --username $$SUPERSET_ADMIN_USER
@@ -202,7 +204,9 @@ services:
       superset init &&
       superset run -h 0.0.0.0 -p 8088"
     ports:
-      - "8088:8088"
+      - "${SUPERSET_HOST_PORT:-8088}:8088"
+    volumes:
+      - superset_home:/app/superset_home
     profiles: ["bi", "all"]
 
   airflow:
@@ -227,3 +231,4 @@ volumes:
   namenode_data:
   datanode_data:
   metastore_db:
+  superset_home:

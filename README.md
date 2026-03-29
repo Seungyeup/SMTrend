@@ -34,6 +34,14 @@ bash scripts/fetch_flink_connectors.sh
 bash scripts/bootstrap_kafka_topics.sh
 ```
 
+Superset에서 실시간으로 계속 확인 가능한 전체 활성화(인프라 + Flink + Druid + 연속 producer)는 아래 한 번으로 실행할 수 있다.
+
+```bash
+bash scripts/activate_superset_monitoring.sh
+```
+
+위 스크립트는 Superset에 기본 대시보드(`SMTrend Monitoring`)와 차트(`Market bars by symbol`)도 자동 생성한다.
+
 확인:
 
 ```bash
@@ -165,9 +173,15 @@ Druid는 `druid/specs/market_bar_1m_kafka.json`으로 `curated.market.bar.1m.v1`
 ```bash
 docker compose --profile serving --profile bi --profile orchestration up -d
 bash scripts/request_druid_ingestion.sh
+bash scripts/apply_druid_retention.sh
 curl -sS http://localhost:8083/druid/indexer/v1/supervisor/market_bar_1m/status
 curl -sS http://localhost:8083/druid/indexer/v1/tasks
 ```
+
+데이터 보관 주기는 `.env`로 조정한다.
+
+- Kafka topic 보관: `RAW_MARKET_RETENTION_DAYS`, `CURATED_MARKET_RETENTION_DAYS` 등 (적용: `bash scripts/bootstrap_kafka_topics.sh`)
+- Druid datasource 보관: `DRUID_RETENTION_DAYS` (적용: `bash scripts/apply_druid_retention.sh`)
 
 실시간 가시화는 아래 두 경로를 사용한다.
 
@@ -177,5 +191,7 @@ curl -sS http://localhost:8083/druid/indexer/v1/tasks
 URL:
 
 - Druid API: `http://localhost:8083`
-- Superset: `http://localhost:8088` (admin/admin)
+- Superset: `http://localhost:${SUPERSET_HOST_PORT:-8088}` (admin/admin)
 - Airflow: `http://localhost:8090` (admin/admin)
+
+`SUPERSET_HOST_PORT`를 지정하면 Superset host port를 변경할 수 있다.

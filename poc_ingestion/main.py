@@ -27,11 +27,20 @@ def _print_or_send(
         producer.send(topic=topic, key=key, value=event)
 
 
+def _run_count_iter(count: int) -> Iterable[int]:
+    if count <= 0:
+        while True:
+            yield 0
+    else:
+        for idx in range(count):
+            yield idx
+
+
 def run_market_mock(args: argparse.Namespace) -> None:
     producer = EventProducer(bootstrap_servers=args.bootstrap_servers, dry_run=args.dry_run)
     price = args.start_price
     try:
-        for _ in range(args.count):
+        for _ in _run_count_iter(args.count):
             price, size = generate_mock_trade(current_price=price)
             event = build_market_trade_event(
                 source="finnhub_mock",
@@ -59,7 +68,7 @@ def run_market_finnhub_poll(args: argparse.Namespace) -> None:
 
     producer = EventProducer(bootstrap_servers=args.bootstrap_servers, dry_run=args.dry_run)
     try:
-        for _ in range(args.count):
+        for _ in _run_count_iter(args.count):
             quote = fetch_finnhub_quote(api_key=api_key, symbol=args.symbol)
             event = build_market_trade_event(
                 source="finnhub_quote",
@@ -130,7 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     market_mock = sub.add_parser("market-mock", help="Generate mock market ticks")
     market_mock.add_argument("--symbol", default="GOOG")
     market_mock.add_argument("--topic", default="raw.market.finnhub.tick.v1")
-    market_mock.add_argument("--count", type=int, default=20)
+    market_mock.add_argument("--count", type=int, default=20, help="Event count (<=0 runs continuously)")
     market_mock.add_argument("--interval-s", type=float, default=1.0)
     market_mock.add_argument("--start-price", type=float, default=180.0)
     market_mock.add_argument("--dry-run", action="store_true")
@@ -139,7 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
     market_finnhub = sub.add_parser("market-finnhub-poll", help="Poll Finnhub quote endpoint")
     market_finnhub.add_argument("--symbol", default="GOOG")
     market_finnhub.add_argument("--topic", default="raw.market.finnhub.tick.v1")
-    market_finnhub.add_argument("--count", type=int, default=20)
+    market_finnhub.add_argument("--count", type=int, default=20, help="Poll count (<=0 runs continuously)")
     market_finnhub.add_argument("--interval-s", type=float, default=2.0)
     market_finnhub.add_argument("--finnhub-api-key", default="")
     market_finnhub.add_argument("--dry-run", action="store_true")
