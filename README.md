@@ -9,7 +9,7 @@
 1. `poc_ingestion/main.py`가 시장/매크로 이벤트를 생성해서 Kafka raw topic에 적재
 2. Flink SQL(`flink/sql/01~05`)이 raw를 읽어
    - Kafka curated/state/analytics topic으로 실시간 가공 결과를 적재
-   - HDFS silver parquet로 materialization
+   - MinIO(S3A) silver parquet로 materialization
 3. Trino가 silver(Hive external)를 읽고 Iceberg 테이블(silver mirror + gold)을 생성
 4. Druid가 Kafka curated topic(`curated.market.bar.1m.v1`)을 실시간 ingestion
 5. Superset이 Trino/Iceberg 또는 Druid를 데이터소스로 조회
@@ -29,8 +29,6 @@ python -m pytest -q
 ## 3) 인프라 기동
 
 ```bash
-docker compose --profile core --profile storage --profile compute --profile query up -d
-bash scripts/fetch_flink_connectors.sh
 bash scripts/bootstrap_kafka_topics.sh
 ```
 
@@ -40,20 +38,14 @@ Superset에서 실시간으로 계속 확인 가능한 전체 활성화(인프�
 bash scripts/activate_superset_monitoring.sh
 ```
 
-위 스크립트는 Superset에 기본 대시보드(`SMTrend Monitoring`)와 차트(`Market bars by symbol`)도 자동 생성한다.
-
-확인:
-
-```bash
-docker compose ps
-```
+위 스크립트는 로컬 수집/처리 파이프라인을 기동하고, 외부 Superset 가용성을 확인한다.
 
 주요 URL:
 
-- Kafka UI: `http://localhost:8091`
-- Flink UI: `http://localhost:8082`
-- NameNode UI: `http://localhost:9870`
-- Trino: `http://localhost:8081`
+- Kafka: `172.30.1.4:9092`
+- Flink UI: (Kubernetes endpoint)
+- MinIO: (Kubernetes/infra endpoint)
+- Trino: (Kubernetes endpoint)
 
 ## 4) 수집(Collect): 어떤 데이터를 어떻게 넣는가
 
@@ -84,9 +76,9 @@ bash scripts/run_fred_batch.sh
 ### 4.3 수집 확인
 
 ```bash
-docker compose exec -T kafka kafka-topics --bootstrap-server kafka:9092 --list
-docker compose exec -T kafka kafka-console-consumer --bootstrap-server kafka:9092 --topic raw.market.finnhub.tick.v1 --from-beginning --max-messages 3
-docker compose exec -T kafka kafka-console-consumer --bootstrap-server kafka:9092 --topic raw.macro.fred.release.v1 --from-beginning --max-messages 3
+docker run --rm confluentinc/cp-kafka:7.6.1 kafka-topics --bootstrap-server 172.30.1.4:9092 --list
+docker run --rm confluentinc/cp-kafka:7.6.1 kafka-console-consumer --bootstrap-server 172.30.1.4:9092 --topic raw.market.finnhub.tick.v1 --from-beginning --max-messages 3
+docker run --rm confluentinc/cp-kafka:7.6.1 kafka-console-consumer --bootstrap-server 172.30.1.4:9092 --topic raw.macro.fred.release.v1 --from-beginning --max-messages 3
 ```
 
 ## 5) 처리(Process): Flink가 실시간으로 무엇을 만드는가
@@ -99,30 +91,32 @@ docker compose exec -T kafka kafka-console-consumer --bootstrap-server kafka:909
   - `macro_latest_state` (upsert-kafka)
   - `analytics_market_macro_1m` (upsert-kafka)
 - 파일 sink:
-  - `hdfs_market_bar_1m` (filesystem/parquet)
-  - `hdfs_macro_release` (filesystem/parquet)
+  - `hdfs_market_bar_1m` (MinIO S3A parquet)
+  - `hdfs_macro_release` (MinIO S3A parquet)
 
 ### 5.2 변환 SQL
 
 - `flink/sql/02_market_bar_1m.sql`: 1분 TUMBLE 윈도우 OHLCV + tick_count 생성
 - `flink/sql/03_macro_state.sql`: macro latest state upsert
 - `flink/sql/04_enriched_analytics.sql`: 1분 바 + macro latest 조인, `macro_age_minutes` 계산
-- `flink/sql/05_hdfs_materialization.sql`: checkpoint(`30s`) + HDFS silver 적재
+- `flink/sql/05_hdfs_materialization.sql`: checkpoint(`30s`) + MinIO silver 적재
 
 ### 5.3 제출/확인
 
 ```bash
+export FLINK_K8S_NAMESPACE=default
+export FLINK_SQL_CLIENT_POD=<flink-sql-client-pod>
 bash scripts/submit_flink_sql.sh
-curl -sS http://localhost:8082/jobs/overview
-docker compose exec -T kafka kafka-console-consumer --bootstrap-server kafka:9092 --topic curated.market.bar.1m.v1 --from-beginning --max-messages 3
-docker compose exec -T namenode hdfs dfs -ls -R /data/silver
+
+# Flink SQL 적용 후 Kafka 산출물 확인
+docker run --rm confluentinc/cp-kafka:7.6.1 kafka-console-consumer --bootstrap-server 172.30.1.4:9092 --topic curated.market.bar.1m.v1 --from-beginning --max-messages 3
 ```
 
 ## 6) 저장(Store) + 분석(Query): Hive external + Iceberg
 
 ### 6.1 현재 저장 계층
 
-- Silver 원본: HDFS parquet (`/data/silver/*`) — Flink가 생성
+- Silver 원본: MinIO parquet (`s3a://smtrend-silver/*`) — Flink가 생성
 - Trino/Hive external: silver parquet를 읽기용으로 매핑
 - Trino/Iceberg: silver mirror + gold analytics를 Iceberg 테이블로 생성
 
@@ -132,36 +126,31 @@ docker compose exec -T namenode hdfs dfs -ls -R /data/silver
 
 - `connector.name=iceberg`
 - `iceberg.catalog.type=hive_metastore`
-- `hive.metastore.uri=thrift://hive-metastore:9083`
+- `hive.metastore.uri=thrift://172.30.1.30:9083`
 
-카탈로그 파일 추가 후 Trino 재시작:
+카탈로그 파일 적용 후 Trino(Kubernetes)에서 SQL 실행:
 
 ```bash
-docker compose restart trino
-docker compose exec -T trino trino --execute "SHOW CATALOGS"
+python scripts/run_trino_sql_http.py --sql-file trino/sql/03_correlation_queries.sql
 ```
 
 ### 6.3 SQL 실행 순서
 
 ```bash
-# silver parquet(HDFS) 읽기용 external table
-docker compose exec -T trino trino --server http://localhost:8080 --file /opt/trino/sql/01_create_external_tables.sql
+# silver parquet(MinIO) 읽기용 external table
+python scripts/run_trino_sql_http.py --sql-file trino/sql/01_create_external_tables.sql
 
 # Iceberg schema/silver mirror/gold 생성
-docker compose exec -T namenode hdfs dfs -mkdir -p /data/iceberg/market_iceberg
-docker compose exec -T namenode hdfs dfs -chmod -R 777 /data/iceberg
-docker compose exec -T trino trino --server http://localhost:8080 --file /opt/trino/sql/02_build_gold_tables.sql
+python scripts/run_trino_sql_http.py --sql-file trino/sql/02_build_gold_tables.sql
 
 # 최종 조회
-docker compose exec -T trino trino --server http://localhost:8080 --file /opt/trino/sql/03_correlation_queries.sql
+python scripts/run_trino_sql_http.py --sql-file trino/sql/03_correlation_queries.sql
 ```
 
 ### 6.4 저장/조회 확인
 
 ```bash
-docker compose exec -T trino trino --execute "SELECT count(*) FROM hive.market.market_bar_1m; SELECT count(*) FROM hive.market.macro_release;"
-docker compose exec -T trino trino --execute "SELECT count(*) FROM iceberg.market_iceberg.market_bar_1m; SELECT count(*) FROM iceberg.market_iceberg.macro_release;"
-docker compose exec -T trino trino --execute "SELECT count(*) FROM iceberg.market_iceberg.market_macro_aligned_daily; SELECT count(*) FROM iceberg.market_iceberg.market_macro_correlation_daily;"
+python scripts/run_trino_sql_http.py --sql-file trino/sql/03_correlation_queries.sql
 ```
 
 시간 컬럼 해석은 UTC 기준으로 맞춰 사용한다(`bucket_1m_utc`, `release_ts_utc`).
@@ -171,11 +160,11 @@ docker compose exec -T trino trino --execute "SELECT count(*) FROM iceberg.marke
 Druid는 `druid/specs/market_bar_1m_kafka.json`으로 `curated.market.bar.1m.v1`를 실시간 ingest한다.
 
 ```bash
-docker compose --profile serving --profile bi --profile orchestration up -d
+export DRUID_API_URL=http://<druid-k8s-endpoint>
 bash scripts/request_druid_ingestion.sh
 bash scripts/apply_druid_retention.sh
-curl -sS http://localhost:8083/druid/indexer/v1/supervisor/market_bar_1m/status
-curl -sS http://localhost:8083/druid/indexer/v1/tasks
+curl -sS ${DRUID_API_URL}/druid/indexer/v1/supervisor/market_bar_1m/status
+curl -sS ${DRUID_API_URL}/druid/indexer/v1/tasks
 ```
 
 데이터 보관 주기는 `.env`로 조정한다.
@@ -190,8 +179,8 @@ curl -sS http://localhost:8083/druid/indexer/v1/tasks
 
 URL:
 
-- Druid API: `http://localhost:8083`
-- Superset: `http://localhost:${SUPERSET_HOST_PORT:-8088}` (admin/admin)
-- Airflow: `http://localhost:8090` (admin/admin)
+- Druid API: (Kubernetes endpoint, `DRUID_API_URL`)
+- Superset: `http://172.30.1.40:8088`
+- Airflow: (Kubernetes endpoint)
 
-`SUPERSET_HOST_PORT`를 지정하면 Superset host port를 변경할 수 있다.
+Superset은 외부 인프라(172.30.1.40:8088)에서 운영한다.

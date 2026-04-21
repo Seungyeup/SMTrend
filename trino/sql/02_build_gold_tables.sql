@@ -1,5 +1,5 @@
 CREATE SCHEMA IF NOT EXISTS iceberg.market_iceberg
-WITH (location = 'hdfs://namenode:9000/data/iceberg/market_iceberg');
+WITH (location = 's3a://smtrend-iceberg/market_iceberg');
 
 DROP TABLE IF EXISTS iceberg.market_iceberg.market_bar_1m;
 CREATE TABLE iceberg.market_iceberg.market_bar_1m

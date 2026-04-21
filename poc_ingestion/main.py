@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import sys
 import time
+from pathlib import Path
 from typing import Iterable
 
 from dotenv import load_dotenv
@@ -96,15 +99,46 @@ def _series_iter(series_csv: str) -> Iterable[str]:
             yield series
 
 
+def _read_env_from_zshrc(name: str) -> str:
+    zshrc = Path.home() / ".zshrc"
+    if not zshrc.exists():
+        return ""
+
+    pattern = re.compile(rf"^(?:export\s+)?{re.escape(name)}=(.*)$")
+    for raw in zshrc.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        matched = pattern.match(line)
+        if not matched:
+            continue
+
+        value = matched.group(1).strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        return value
+
+    return ""
+
+
 def run_fred_batch(args: argparse.Namespace) -> None:
-    api_key = args.fred_api_key or os.getenv("FRED_API_KEY")
+    api_key = args.fred_api_key or os.getenv("FRED_API_KEY") or _read_env_from_zshrc("FRED_API_KEY")
     if not api_key:
         raise ValueError("FRED_API_KEY is required for fred-batch mode")
 
     producer = EventProducer(bootstrap_servers=args.bootstrap_servers, dry_run=args.dry_run)
+    sent_rows = 0
+    failed_series: list[str] = []
     try:
         for series_id in _series_iter(args.series):
-            rows = fetch_fred_observations(api_key=api_key, series_id=series_id, limit=args.limit)
+            try:
+                rows = fetch_fred_observations(api_key=api_key, series_id=series_id, limit=args.limit)
+            except Exception as exc:  # noqa: BLE001
+                failed_series.append(series_id)
+                print(f"[WARN] FRED fetch failed for series={series_id}: {exc}", file=sys.stderr)
+                continue
+
             for row in rows:
                 event = build_macro_release_event(
                     source="fred_batch",
@@ -122,6 +156,11 @@ def run_fred_batch(args: argparse.Namespace) -> None:
                     event=event,
                     dry_run=args.dry_run,
                 )
+                sent_rows += 1
+
+        if sent_rows == 0 and failed_series:
+            failed_csv = ",".join(failed_series)
+            raise RuntimeError(f"FRED batch failed for all series: {failed_csv}")
     finally:
         producer.close()
 
@@ -130,7 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Stock + macro ingestion PoC")
     parser.add_argument(
         "--bootstrap-servers",
-        default=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:19092"),
+        default=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "172.30.1.4:9092"),
         help="Kafka bootstrap servers",
     )
 

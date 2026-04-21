@@ -11,9 +11,9 @@ CREATE TABLE IF NOT EXISTS raw_market_tick (
 ) WITH (
   'connector' = 'kafka',
   'topic' = 'raw.market.finnhub.tick.v1',
-  'properties.bootstrap.servers' = 'kafka:9092',
+  'properties.bootstrap.servers' = '172.30.1.4:9092',
   'properties.group.id' = 'flink-market-tick-consumer',
-  'scan.startup.mode' = 'earliest-offset',
+  'scan.startup.mode' = 'latest-offset',
   'format' = 'json'
 );
 
@@ -37,9 +37,9 @@ CREATE TABLE IF NOT EXISTS raw_macro_release (
 ) WITH (
   'connector' = 'kafka',
   'topic' = 'raw.macro.fred.release.v1',
-  'properties.bootstrap.servers' = 'kafka:9092',
+  'properties.bootstrap.servers' = '172.30.1.4:9092',
   'properties.group.id' = 'flink-macro-consumer',
-  'scan.startup.mode' = 'earliest-offset',
+  'scan.startup.mode' = 'latest-offset',
   'format' = 'json'
 );
 
@@ -56,9 +56,9 @@ CREATE TABLE IF NOT EXISTS curated_market_bar_1m (
 ) WITH (
   'connector' = 'kafka',
   'topic' = 'curated.market.bar.1m.v1',
-  'properties.bootstrap.servers' = 'kafka:9092',
+  'properties.bootstrap.servers' = '172.30.1.4:9092',
   'properties.group.id' = 'flink-curated-bar-consumer',
-  'scan.startup.mode' = 'earliest-offset',
+  'scan.startup.mode' = 'latest-offset',
   'format' = 'json'
 );
 
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS macro_latest_state (
 ) WITH (
   'connector' = 'upsert-kafka',
   'topic' = 'state.macro.latest.v1',
-  'properties.bootstrap.servers' = 'kafka:9092',
+  'properties.bootstrap.servers' = '172.30.1.4:9092',
   'key.format' = 'json',
   'value.format' = 'json'
 );
@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS analytics_market_macro_1m (
 ) WITH (
   'connector' = 'upsert-kafka',
   'topic' = 'analytics.market_macro.1m.v1',
-  'properties.bootstrap.servers' = 'kafka:9092',
+  'properties.bootstrap.servers' = '172.30.1.4:9092',
   'key.format' = 'json',
   'value.format' = 'json'
 );
@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS hdfs_market_bar_1m (
   tick_count BIGINT
 ) WITH (
   'connector' = 'filesystem',
-  'path' = 'hdfs://namenode:9000/data/silver/market_bar_1m',
+  'path' = 's3a://smtrend-silver/market_bar_1m',
   'format' = 'parquet'
 );
 
@@ -120,6 +120,6 @@ CREATE TABLE IF NOT EXISTS hdfs_macro_release (
   realtime_end DATE
 ) WITH (
   'connector' = 'filesystem',
-  'path' = 'hdfs://namenode:9000/data/silver/macro_release',
+  'path' = 's3a://smtrend-silver/macro_release',
   'format' = 'parquet'
 );

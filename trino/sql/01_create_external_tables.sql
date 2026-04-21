@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS hive.market.market_bar_1m (
   tick_count BIGINT
 )
 WITH (
-  external_location = 'hdfs://namenode:9000/data/silver/market_bar_1m',
+  external_location = 's3a://smtrend-silver/market_bar_1m',
   format = 'PARQUET'
 );
 
@@ -26,6 +26,6 @@ CREATE TABLE IF NOT EXISTS hive.market.macro_release (
   realtime_end DATE
 )
 WITH (
-  external_location = 'hdfs://namenode:9000/data/silver/macro_release',
+  external_location = 's3a://smtrend-silver/macro_release',
   format = 'PARQUET'
 );

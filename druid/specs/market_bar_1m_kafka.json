@@ -43,7 +43,7 @@
         "type": "json"
       },
       "consumerProperties": {
-        "bootstrap.servers": "kafka:9092",
+        "bootstrap.servers": "172.30.1.4:9092",
         "isolation.level": "read_committed"
       },
       "taskCount": 1,

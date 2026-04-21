@@ -1,29 +1,66 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-for jar in flink/lib/*.jar; do
-  docker compose cp "${jar}" flink-jobmanager:/opt/flink/lib/
-  docker compose cp "${jar}" flink-taskmanager:/opt/flink/lib/
-done
+FLINK_K8S_NAMESPACE="${FLINK_K8S_NAMESPACE:-smtrend}"
+FLINK_SQL_CLIENT_POD="${FLINK_SQL_CLIENT_POD:-}"
+FLINK_SUBMIT_MODE="${FLINK_SUBMIT_MODE:-full}"
+FLINK_PARALLELISM="${FLINK_PARALLELISM:-1}"
 
-docker compose restart flink-jobmanager flink-taskmanager
+if [[ -z "${FLINK_SQL_CLIENT_POD}" ]]; then
+  FLINK_SQL_CLIENT_POD="$(kubectl -n "${FLINK_K8S_NAMESPACE}" get pods -l app=flink,component=jobmanager -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+fi
 
-until curl -sSf http://localhost:8082/overview >/dev/null; do
-  sleep 1
+if [[ -z "${FLINK_SQL_CLIENT_POD}" ]]; then
+  echo "Flink jobmanager pod not found in namespace ${FLINK_K8S_NAMESPACE}." >&2
+  exit 1
+fi
+
+if ! command -v kubectl >/dev/null 2>&1; then
+  echo "kubectl is required for Kubernetes Flink SQL submission." >&2
+  exit 1
+fi
+
+kubectl -n "${FLINK_K8S_NAMESPACE}" exec "${FLINK_SQL_CLIENT_POD}" -- mkdir -p /tmp/flink-jars
+
+for jar in \
+  flink/lib/flink-sql-connector-kafka-3.1.0-1.18.jar \
+  flink/lib/flink-parquet-1.18.1.jar \
+  flink/lib/parquet-hadoop-bundle-1.13.1.jar \
+  flink/lib/hadoop-mapreduce-client-core-3.3.6.jar; do
+  if [[ -f "${jar}" ]]; then
+    kubectl -n "${FLINK_K8S_NAMESPACE}" cp "${jar}" "${FLINK_SQL_CLIENT_POD}:/tmp/flink-jars/$(basename "${jar}")"
+  fi
 done
 
 tmp_file="/tmp/flink_poc_all.sql"
-cat \
-  flink/sql/01_tables.sql \
-  flink/sql/02_market_bar_1m.sql \
-  flink/sql/03_macro_state.sql \
-  flink/sql/04_enriched_analytics.sql \
-  flink/sql/05_hdfs_materialization.sql > "${tmp_file}"
+{
+  echo "SET 'parallelism.default' = '${FLINK_PARALLELISM}';"
+  echo "SET 'table.exec.resource.default-parallelism' = '${FLINK_PARALLELISM}';"
 
-docker compose cp "${tmp_file}" flink-jobmanager:/tmp/flink_poc_all.sql
-docker compose exec -T \
-  -e HADOOP_CONF_DIR=/etc/hadoop/conf \
-  -e HADOOP_CLASSPATH=/opt/flink/hadoop-libs/* \
-  flink-jobmanager /opt/flink/bin/sql-client.sh -f /tmp/flink_poc_all.sql
+  echo "ADD JAR 'file:///tmp/flink-jars/flink-sql-connector-kafka-3.1.0-1.18.jar';"
+  echo "ADD JAR 'file:///tmp/flink-jars/flink-parquet-1.18.1.jar';"
+  echo "ADD JAR 'file:///tmp/flink-jars/parquet-hadoop-bundle-1.13.1.jar';"
+  echo "ADD JAR 'file:///tmp/flink-jars/hadoop-mapreduce-client-core-3.3.6.jar';"
+  echo "ADD JAR 'file:///opt/flink/opt/flink-s3-fs-hadoop-1.18.1.jar';"
 
-echo "Flink SQL statements submitted in one session file."
+  if [[ "${FLINK_SUBMIT_MODE}" == "market-poc" ]]; then
+    cat flink/sql/01_tables.sql
+    cat flink/sql/02_market_bar_1m.sql
+    cat flink/sql/06_market_only_materialization.sql
+  elif [[ "${FLINK_SUBMIT_MODE}" == "minimal" ]]; then
+    cat flink/sql/01_tables.sql
+    cat flink/sql/05_hdfs_materialization.sql
+  else
+    cat flink/sql/01_tables.sql
+    cat flink/sql/02_market_bar_1m.sql
+    cat flink/sql/03_macro_state.sql
+    cat flink/sql/04_enriched_analytics.sql
+    cat flink/sql/05_hdfs_materialization.sql
+  fi
+} > "${tmp_file}"
+
+kubectl -n "${FLINK_K8S_NAMESPACE}" cp "${tmp_file}" "${FLINK_SQL_CLIENT_POD}:/tmp/flink_poc_all.sql"
+kubectl -n "${FLINK_K8S_NAMESPACE}" exec "${FLINK_SQL_CLIENT_POD}" -- \
+  /opt/flink/bin/sql-client.sh -f /tmp/flink_poc_all.sql
+
+echo "Flink SQL statements submitted via Kubernetes pod ${FLINK_SQL_CLIENT_POD}."

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DRUID_API_URL="${DRUID_API_URL:-http://localhost:8083}"
+DRUID_API_URL="${DRUID_API_URL:-http://druid-router:8888}"
 
 curl -X POST \
   -H "Content-Type: application/json" \

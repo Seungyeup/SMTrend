@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import requests
@@ -49,7 +50,10 @@ def split_sql(sql_text: str) -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run SQL file through Trino HTTP API")
     parser.add_argument("--sql-file", required=True)
-    parser.add_argument("--trino-statement-url", default="http://trino:8080/v1/statement")
+    parser.add_argument(
+        "--trino-statement-url",
+        default=os.getenv("TRINO_STATEMENT_URL", "http://trino:8080/v1/statement"),
+    )
     parser.add_argument("--user", default="airflow")
     parser.add_argument("--catalog", default="hive")
     parser.add_argument("--schema", default="market")

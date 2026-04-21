@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+KAFKA_BOOTSTRAP_SERVERS="${KAFKA_BOOTSTRAP_SERVERS:-172.30.1.4:9092}"
+KAFKA_CLI_IMAGE="${KAFKA_CLI_IMAGE:-confluentinc/cp-kafka:7.6.1}"
+
 RAW_MARKET_RETENTION_DAYS="${RAW_MARKET_RETENTION_DAYS:-7}"
 RAW_MACRO_RETENTION_DAYS="${RAW_MACRO_RETENTION_DAYS:-365}"
 CURATED_MARKET_RETENTION_DAYS="${CURATED_MARKET_RETENTION_DAYS:-30}"
@@ -22,20 +25,20 @@ TOPICS=(
 for item in "${TOPICS[@]}"; do
   IFS=":" read -r topic partitions retention_days cleanup_policy <<<"${item}"
   retention_ms=$((retention_days * 24 * 60 * 60 * 1000))
-  docker compose exec -T kafka kafka-topics \
-    --bootstrap-server kafka:9092 \
+  docker run --rm "${KAFKA_CLI_IMAGE}" kafka-topics \
+    --bootstrap-server "${KAFKA_BOOTSTRAP_SERVERS}" \
     --create \
     --if-not-exists \
     --topic "${topic}" \
     --partitions "${partitions}" \
     --replication-factor 1
 
-  docker compose exec -T kafka kafka-configs \
-    --bootstrap-server kafka:9092 \
+  docker run --rm "${KAFKA_CLI_IMAGE}" kafka-configs \
+    --bootstrap-server "${KAFKA_BOOTSTRAP_SERVERS}" \
     --entity-type topics \
     --entity-name "${topic}" \
     --alter \
     --add-config "retention.ms=${retention_ms},cleanup.policy=${cleanup_policy}"
 done
 
-echo "Kafka topics are ready."
+echo "Kafka topics are ready on ${KAFKA_BOOTSTRAP_SERVERS}."

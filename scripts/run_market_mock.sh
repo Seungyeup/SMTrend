@@ -7,7 +7,7 @@ if [[ -x ".venv/bin/python" ]]; then
 fi
 
 "${python_bin}" -m poc_ingestion.main \
-  --bootstrap-servers "${KAFKA_BOOTSTRAP_SERVERS:-localhost:19092}" \
+  --bootstrap-servers "${KAFKA_BOOTSTRAP_SERVERS:-172.30.1.4:9092}" \
   market-mock \
   --symbol "${MARKET_MOCK_SYMBOL:-GOOG}" \
   --count "${MARKET_MOCK_COUNT:-0}" \

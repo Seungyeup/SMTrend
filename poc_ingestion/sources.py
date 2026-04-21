@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -36,19 +37,34 @@ def fetch_fred_observations(
     series_id: str,
     limit: int,
     timeout_s: int = 20,
+    max_retries: int = 3,
 ) -> list[dict[str, Any]]:
-    response = requests.get(
-        "https://api.stlouisfed.org/fred/series/observations",
-        params={
-            "series_id": series_id,
-            "api_key": api_key,
-            "file_type": "json",
-            "sort_order": "desc",
-            "limit": limit,
-        },
-        timeout=timeout_s,
-    )
-    response.raise_for_status()
+    response = None
+    for attempt in range(max_retries):
+        response = requests.get(
+            "https://api.stlouisfed.org/fred/series/observations",
+            params={
+                "series_id": series_id,
+                "api_key": api_key,
+                "file_type": "json",
+                "sort_order": "desc",
+                "limit": limit,
+            },
+            timeout=timeout_s,
+        )
+
+        if response.status_code < 500:
+            response.raise_for_status()
+            break
+
+        if attempt == max_retries - 1:
+            response.raise_for_status()
+
+        time.sleep(1.5 * (attempt + 1))
+
+    if response is None:
+        raise RuntimeError("FRED response was not received")
+
     payload = response.json()
     observations: list[dict[str, Any]] = []
     for row in payload.get("observations", []):
