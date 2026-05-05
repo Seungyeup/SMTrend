@@ -1,0 +1,3 @@
+trino
+pydruid
+psycopg2-binary

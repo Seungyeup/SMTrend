@@ -1,0 +1,131 @@
+services:
+  druid-postgres:
+    image: postgres:17.6
+    container_name: smtrend-druid-postgres
+    profiles:
+      - druid
+    environment:
+      POSTGRES_PASSWORD: FoolishPassword
+      POSTGRES_USER: druid
+      POSTGRES_DB: druid
+    ports:
+      - "5433:5432"
+    volumes:
+      - smtrend-druid-metadata:/var/lib/postgresql/data
+
+  druid-zookeeper:
+    image: zookeeper:3.5.10
+    container_name: smtrend-druid-zookeeper
+    profiles:
+      - druid
+    environment:
+      ZOO_MY_ID: 1
+    ports:
+      - "2181:2181"
+
+  druid-coordinator:
+    image: apache/druid:31.0.0
+    platform: linux/amd64
+    container_name: smtrend-druid-coordinator
+    profiles:
+      - druid
+    depends_on:
+      - druid-zookeeper
+      - druid-postgres
+    ports:
+      - "8090:8081"
+    command:
+      - coordinator
+    env_file:
+      - druid.environment
+    volumes:
+      - smtrend-druid-shared:/opt/shared
+      - smtrend-druid-coordinator-var:/opt/druid/var
+
+  druid-broker:
+    image: apache/druid:31.0.0
+    platform: linux/amd64
+    container_name: smtrend-druid-broker
+    profiles:
+      - druid
+    depends_on:
+      - druid-zookeeper
+      - druid-postgres
+      - druid-coordinator
+    ports:
+      - "8082:8082"
+    command:
+      - broker
+    env_file:
+      - druid.environment
+    volumes:
+      - smtrend-druid-broker-var:/opt/druid/var
+
+  druid-historical:
+    image: apache/druid:31.0.0
+    platform: linux/amd64
+    container_name: smtrend-druid-historical
+    profiles:
+      - druid
+    depends_on:
+      - druid-zookeeper
+      - druid-postgres
+      - druid-coordinator
+    ports:
+      - "8083:8083"
+    command:
+      - historical
+    env_file:
+      - druid.environment
+    volumes:
+      - smtrend-druid-shared:/opt/shared
+      - smtrend-druid-historical-var:/opt/druid/var
+
+  druid-middlemanager:
+    image: apache/druid:31.0.0
+    platform: linux/amd64
+    container_name: smtrend-druid-middlemanager
+    profiles:
+      - druid
+    depends_on:
+      - druid-zookeeper
+      - druid-postgres
+      - druid-coordinator
+    ports:
+      - "8091:8091"
+      - "8100-8105:8100-8105"
+    command:
+      - middleManager
+    env_file:
+      - druid.environment
+    volumes:
+      - smtrend-druid-shared:/opt/shared
+      - smtrend-druid-middlemanager-var:/opt/druid/var
+
+  druid-router:
+    image: apache/druid:31.0.0
+    platform: linux/amd64
+    container_name: smtrend-druid-router
+    profiles:
+      - druid
+    depends_on:
+      - druid-zookeeper
+      - druid-postgres
+      - druid-coordinator
+    ports:
+      - "8888:8888"
+    command:
+      - router
+    env_file:
+      - druid.environment
+    volumes:
+      - smtrend-druid-router-var:/opt/druid/var
+
+volumes:
+  smtrend-druid-metadata:
+  smtrend-druid-shared:
+  smtrend-druid-coordinator-var:
+  smtrend-druid-broker-var:
+  smtrend-druid-historical-var:
+  smtrend-druid-middlemanager-var:
+  smtrend-druid-router-var:

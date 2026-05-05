@@ -1,0 +1,37 @@
+name: smtrend-superset
+
+services:
+  superset-db:
+    image: postgres:17
+    container_name: smtrend-superset-db
+    environment:
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: superset
+      POSTGRES_DB: superset
+    volumes:
+      - smtrend-superset-db-data:/var/lib/postgresql/data
+
+  superset:
+    image: apache/superset:4.1.1
+    container_name: smtrend-superset
+    depends_on:
+      - superset-db
+    ports:
+      - "8088:8088"
+    env_file:
+      - superset.env
+    environment:
+      SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
+      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://superset:superset@superset-db:5432/superset
+    volumes:
+      - ./requirements-local.txt:/app/docker/requirements-local.txt:ro
+      - ./superset_config.py:/app/pythonpath/superset_config.py:ro
+      - ../bootstrap:/app/bootstrap:ro
+      - ./start_superset.sh:/app/start_superset.sh:ro
+    command:
+      - /bin/bash
+      - -lc
+      - bash /app/start_superset.sh
+
+volumes:
+  smtrend-superset-db-data:
